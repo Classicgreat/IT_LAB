@@ -1,9 +1,7 @@
-#include <algorithm>
+#include <climits>
 #include <cstdint>
-#include <functional>
 #include <iostream>
 #include <stdexcept>
-#include <utility>
 #include <vector>
 
 template <typename K, typename V, typename Hash = std::hash<K>,
@@ -36,7 +34,7 @@ class HashTable {
 
   std::vector<Slot> slots;
   std::vector<uint8_t> ctrl; // control-байты
-  std::vector<uint8_t> bloom_mas;
+  std::vector<unsigned long long> bloom_mas;
   bool bloom_enabled = true;
   size_t count = 0;
   size_t tombstones = 0;
@@ -64,12 +62,13 @@ class HashTable {
 
   void rehash(size_t newCap);
 
-  void bloom_change(size_t h, int step);
+  void bloom_change(size_t h, bool step);
   bool bloom_check(size_t h) const;
 
 public:
   explicit HashTable(size_t initial = MIN_CAPACITY, int _loadfactor_num = 7,
-                     int _loadfactor_den = 8, bool bloom = true, Hash h = Hash{});
+                     int _loadfactor_den = 8, bool bloom = true,
+                     Hash h = Hash{});
 
   void insert(const K &key, const V &value);
 
@@ -122,10 +121,10 @@ size_t HashTable<K, V, Hash, GroupSize>::roundUpPow2(size_t n) {
 
 template <typename K, typename V, typename Hash, size_t GroupSize>
 HashTable<K, V, Hash, GroupSize>::HashTable(size_t initial, int _loadfactor_num,
-                                            int _loadfactor_den, bool bloom, Hash h)
+                                            int _loadfactor_den, bool bloom,
+                                            Hash h)
     : loadfactor_numerator(_loadfactor_num),
-      loadfactor_denominator(_loadfactor_den),
-      bloom_enabled(bloom),
+      loadfactor_denominator(_loadfactor_den), bloom_enabled(bloom),
       hasher(std::move(h)) {
   size_t c = std::max(MIN_CAPACITY, roundUpPow2(initial));
   slots.resize(c);
@@ -200,7 +199,7 @@ void HashTable<K, V, Hash, GroupSize>::rehash(size_t newCap) {
 
   slots.assign(nc, Slot{});
   ctrl.assign(nc, EMPTY_BYTE);
-    cap = nc;
+  cap = nc;
   mask = nc - 1;
   if (bloom_enabled) {
     bmask = nc >> 1;
@@ -223,30 +222,32 @@ void HashTable<K, V, Hash, GroupSize>::rehash(size_t newCap) {
 //  Bloom
 // ----------------------------------------------------------------
 template <typename K, typename V, typename Hash, size_t GroupSize>
-void HashTable<K, V, Hash, GroupSize>::bloom_change(size_t h, int step) {
-  if (!bloom_enabled) return;
+void HashTable<K, V, Hash, GroupSize>::bloom_change(size_t h, bool step) {
+  if (!bloom_enabled)
+    return;
 
   uint32_t a = static_cast<uint32_t>(h);
   uint32_t b = static_cast<uint32_t>(h >> 32) | 1;
   for (int i = 0; i < 2; ++i) {
-    uint8_t &counter = bloom_mas[a & bmask];
-    if (step > 0) {
-      if (counter < UINT8_MAX) ++counter;
-    } else if (step < 0) {
-      if (counter > 0 && counter < UINT8_MAX) --counter;
-    }
+    unsigned long long &counter = bloom_mas[a & bmask];
+    if (step && counter < ULONG_LONG_MAX)
+      ++counter;
+    else if (counter > 0 && counter < ULONG_LONG_MAX)
+      --counter;
     a += b;
   }
 }
 
 template <typename K, typename V, typename Hash, size_t GroupSize>
 bool HashTable<K, V, Hash, GroupSize>::bloom_check(size_t h) const {
-  if (!bloom_enabled) return true;   // фильтр выключен — "пропускаем" всегда
+  if (!bloom_enabled)
+    return true;
 
   uint32_t a = static_cast<uint32_t>(h);
   uint32_t b = static_cast<uint32_t>(h >> 32) | 1;
   for (int i = 0; i < 2; ++i) {
-    if (bloom_mas[a & bmask] == 0) return false;
+    if (bloom_mas[a & bmask] == 0)
+      return false;
     a += b;
   }
   return true;
@@ -330,7 +331,7 @@ bool HashTable<K, V, Hash, GroupSize>::remove(const K &key) {
   if (!r.found)
     return false;
 
-  bloom_change(h, -1);
+  bloom_change(h, 0);
 
   ctrl[r.index] = DELETED_BYTE;
   slots[r.index].key = K{};
